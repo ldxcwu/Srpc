@@ -1,12 +1,10 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"srpc"
-	"srpc/codec"
 )
 
 func startServer(addr chan string) {
@@ -20,25 +18,42 @@ func startServer(addr chan string) {
 }
 
 func main() {
+	// Message Codec
+	/* 	addr := make(chan string)
+	   	go startServer(addr)
+
+	   	conn, err := net.Dial("tcp", <-addr)
+	   	if err != nil {
+	   		log.Fatal("something wrong when dialing: ", err)
+	   	}
+	   	defer conn.Close()
+	   	json.NewEncoder(conn).Encode(srpc.DefaultOption)
+	   	cc := codec.NewGobCodec(conn)
+	   	for i := 0; i < 5; i++ {
+	   		h := &codec.Header{
+	   			ServiceMethod: "Test.Sum",
+	   			Seq:           uint64(i),
+	   		}
+	   		cc.Write(h, fmt.Sprintf("srpc req %d", h.Seq))
+	   		cc.ReadHeader(h)
+	   		var reply string
+	   		cc.ReadBody(&reply)
+	   		log.Println("reply: ", reply)
+	   	} */
+
+	// Implement Client
 	addr := make(chan string)
 	go startServer(addr)
 
-	conn, err := net.Dial("tcp", <-addr)
+	client, err := srpc.Dial("tcp", <-addr)
 	if err != nil {
-		log.Fatal("something wrong when dialing: ", err)
+		log.Fatal("something went wrong when dialing: ", err)
 	}
-	defer conn.Close()
-	json.NewEncoder(conn).Encode(srpc.DefaultOption)
-	cc := codec.NewGobCodec(conn)
+	defer client.Close()
 	for i := 0; i < 5; i++ {
-		h := &codec.Header{
-			ServiceMethod: "Test.Sum",
-			Seq:           uint64(i),
-		}
-		cc.Write(h, fmt.Sprintf("srpc req %d", h.Seq))
-		cc.ReadHeader(h)
+		serviceMethod := fmt.Sprintf("ClientTest.Method%d", i)
 		var reply string
-		cc.ReadBody(&reply)
-		log.Println("reply: ", reply)
+		client.Call(serviceMethod, "Args", &reply)
+		fmt.Println(reply)
 	}
 }
