@@ -1,13 +1,26 @@
 package main
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"srpc"
+	"sync"
 )
 
+type Foo int
+
+type Args struct{ Num1, Num2 int }
+
+func (f Foo) Sum(args Args, reply *int) error {
+	*reply = args.Num1 + args.Num2
+	return nil
+}
+
 func startServer(addr chan string) {
+	var foo Foo
+	if err := srpc.Register(&foo); err != nil {
+		log.Fatal("register error: ", err)
+	}
 	lis, err := net.Listen("tcp", ":8080")
 	if err != nil {
 		log.Fatal("Listen err: ", err)
@@ -18,30 +31,7 @@ func startServer(addr chan string) {
 }
 
 func main() {
-	// Message Codec
-	/* 	addr := make(chan string)
-	   	go startServer(addr)
 
-	   	conn, err := net.Dial("tcp", <-addr)
-	   	if err != nil {
-	   		log.Fatal("something wrong when dialing: ", err)
-	   	}
-	   	defer conn.Close()
-	   	json.NewEncoder(conn).Encode(srpc.DefaultOption)
-	   	cc := codec.NewGobCodec(conn)
-	   	for i := 0; i < 5; i++ {
-	   		h := &codec.Header{
-	   			ServiceMethod: "Test.Sum",
-	   			Seq:           uint64(i),
-	   		}
-	   		cc.Write(h, fmt.Sprintf("srpc req %d", h.Seq))
-	   		cc.ReadHeader(h)
-	   		var reply string
-	   		cc.ReadBody(&reply)
-	   		log.Println("reply: ", reply)
-	   	} */
-
-	// Implement Client
 	addr := make(chan string)
 	go startServer(addr)
 
@@ -50,10 +40,19 @@ func main() {
 		log.Fatal("something went wrong when dialing: ", err)
 	}
 	defer client.Close()
+
+	var wg sync.WaitGroup
 	for i := 0; i < 5; i++ {
-		serviceMethod := fmt.Sprintf("ClientTest.Method%d", i)
-		var reply string
-		client.Call(serviceMethod, "Args", &reply)
-		fmt.Println(reply)
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			args := &Args{Num1: i, Num2: i}
+			var reply int
+			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+				log.Fatal("call Foo.Sum error: ", err)
+			}
+			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)
+		}(i)
 	}
+	wg.Wait()
 }
