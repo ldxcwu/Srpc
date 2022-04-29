@@ -3,24 +3,29 @@ package srpc
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"reflect"
 	"srpc/codec"
 	"strings"
 	"sync"
+	"time"
 )
 
 const MagicNumber = 0x666666
 
 type Option struct {
-	MagicNumber int
-	CodecType   string
+	MagicNumber    int
+	CodecType      string
+	ConnectTimeout time.Duration //0 means no limit
+	HandleTimeout  time.Duration
 }
 
 var DefaultOption = &Option{
-	MagicNumber: MagicNumber,
-	CodecType:   codec.GobType,
+	MagicNumber:    MagicNumber,
+	CodecType:      codec.GobType,
+	ConnectTimeout: time.Second * 5,
 }
 
 type Server struct {
@@ -53,18 +58,18 @@ func (s *Server) ServeConn(conn net.Conn) {
 		return
 	}
 	if opt.MagicNumber != MagicNumber {
-		log.Println("rpc server: invalid magic number %x", opt.MagicNumber)
+		log.Println("rpc server: invalid magic number ", opt.MagicNumber)
 		return
 	}
 	f := codec.NewCodecFuncMap[opt.CodecType]
 	if f == nil {
-		log.Println("rpc server: invalid codec type %s", opt.CodecType)
+		log.Println("rpc server: invalid codec type ", opt.CodecType)
 		return
 	}
-	s.serveCodec(f(conn))
+	s.serveCodec(f(conn), &opt)
 }
 
-func (s *Server) serveCodec(cc codec.Codec) {
+func (s *Server) serveCodec(cc codec.Codec, opt *Option) {
 	sending := new(sync.Mutex)
 	wg := new(sync.WaitGroup)
 	for {
@@ -78,7 +83,7 @@ func (s *Server) serveCodec(cc codec.Codec) {
 			continue
 		}
 		wg.Add(1)
-		go s.handleRequest(cc, req, sending, wg)
+		go s.handleRequest(cc, req, sending, wg, opt.HandleTimeout)
 	}
 	wg.Wait()
 	_ = cc.Close()
@@ -139,19 +144,32 @@ func (server *Server) sendResponse(cc codec.Codec, h *codec.Header, body interfa
 	}
 }
 
-func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup) {
-	// TODO, should call registered rpc methods to get the right replyv
-	// day 1, just print argv and send a hello message
+func (server *Server) handleRequest(cc codec.Codec, req *request, sending *sync.Mutex, wg *sync.WaitGroup, timeout time.Duration) {
 	defer wg.Done()
-	// req.reply = reflect.ValueOf(fmt.Sprintf("srpc resp %d", req.h.Seq))
-	// server.sendResponse(cc, req.h, req.reply.Interface(), sending)
-	err := req.svc.call(req.mtype, req.argv, req.reply)
-	if err != nil {
-		req.h.Error = err.Error()
-		server.sendResponse(cc, req.h, "invalidRequest", sending)
+	ch := make(chan struct{})
+	go func() {
+		err := req.svc.call(req.mtype, req.argv, req.reply)
+		if err != nil {
+			req.h.Error = err.Error()
+			server.sendResponse(cc, req.h, "invalidRequest", sending)
+			ch <- struct{}{}
+			return
+		}
+		server.sendResponse(cc, req.h, req.reply.Interface(), sending)
+		ch <- struct{}{}
+	}()
+	if timeout == 0 {
+		<-ch
 		return
 	}
-	server.sendResponse(cc, req.h, req.reply.Interface(), sending)
+	select {
+	case <-time.After(timeout):
+		req.h.Error = fmt.Sprintf("rpc server: request handle timeout within %s", timeout)
+		server.sendResponse(cc, req.h, req.h.Error, sending)
+		close(ch)
+	case <-ch:
+		return
+	}
 }
 
 func (server *Server) Register(rcvr interface{}) error {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net"
 	"srpc"
@@ -35,7 +36,7 @@ func main() {
 	addr := make(chan string)
 	go startServer(addr)
 
-	client, err := srpc.Dial("tcp", <-addr)
+	client, err := srpc.DialTimeout("tcp", <-addr, nil, nil)
 	if err != nil {
 		log.Fatal("something went wrong when dialing: ", err)
 	}
@@ -48,7 +49,7 @@ func main() {
 			defer wg.Done()
 			args := &Args{Num1: i, Num2: i}
 			var reply int
-			if err := client.Call("Foo.Sum", args, &reply); err != nil {
+			if err := client.Call(context.Background(), "Foo.Sum", args, &reply); err != nil {
 				log.Fatal("call Foo.Sum error: ", err)
 			}
 			log.Printf("%d + %d = %d", args.Num1, args.Num2, reply)

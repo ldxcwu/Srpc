@@ -1,6 +1,7 @@
 package srpc
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,9 +9,11 @@ import (
 	"net"
 	"srpc/codec"
 	"sync"
+	"time"
 )
 
 type Call struct {
+	seq           uint64
 	ServiceMethod string
 	Args          interface{}
 	Reply         interface{}
@@ -23,7 +26,6 @@ func (c *Call) done() {
 }
 
 type Client struct {
-	Address  string
 	cc       codec.Codec
 	header   codec.Header
 	pendings map[uint64]*Call
@@ -37,15 +39,57 @@ type Client struct {
 
 var ErrShutdown = errors.New("connection is shut down")
 
-func Dial(network, addr string) (*Client, error) {
-	conn, err := net.Dial(network, addr)
+type clientRes struct {
+	client *Client
+	err    error
+}
+
+type newClientFunc func(conn net.Conn, opt *Option) (*Client, error)
+
+func DialTimeout(network, addr string, opt *Option, f newClientFunc) (*Client, error) {
+	if opt == nil {
+		opt = DefaultOption
+	}
+	opt.MagicNumber = DefaultOption.MagicNumber
+	if opt.CodecType == "" {
+		opt.CodecType = DefaultOption.CodecType
+	}
+	conn, err := net.DialTimeout(network, addr, opt.ConnectTimeout)
 	if err != nil {
 		return nil, err
 	}
-	json.NewEncoder(conn).Encode(DefaultOption)
+	defer func() {
+		if err != nil {
+			conn.Close()
+		}
+	}()
+	ch := make(chan clientRes)
+	go func() {
+		if f == nil {
+			f = newClient
+		}
+		c, e := f(conn, opt)
+		ch <- clientRes{client: c, err: e}
+	}()
+	if opt.ConnectTimeout == 0 {
+		ret := <-ch
+		return ret.client, ret.err
+	}
+	select {
+	case <-time.After(opt.ConnectTimeout):
+		return nil, fmt.Errorf("rpc client: connection timeout within %s", opt.ConnectTimeout)
+	case ret := <-ch:
+		return ret.client, ret.err
+	}
+}
+
+func newClient(conn net.Conn, opt *Option) (*Client, error) {
+	err := json.NewEncoder(conn).Encode(opt)
+	if err != nil {
+		return nil, err
+	}
 	cc := codec.NewGobCodec(conn)
 	client := &Client{
-		Address:  addr,
 		cc:       cc,
 		pendings: make(map[uint64]*Call),
 		opt:      DefaultOption,
@@ -147,9 +191,17 @@ func (c *Client) Go(serviceMethod string, args, reply interface{}, done chan *Ca
 }
 
 //Sync
-func (c *Client) Call(serviceMethod string, args, reply interface{}) error {
-	call := <-c.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done
-	return call.Error
+func (c *Client) Call(ctx context.Context, serviceMethod string, args, reply interface{}) error {
+	// call := <-c.Go(serviceMethod, args, reply, make(chan *Call, 1)).Done
+	// return call.Error
+	call := c.Go(serviceMethod, args, reply, make(chan *Call, 1))
+	select {
+	case <-ctx.Done():
+		c.RemoveCall(call.seq)
+		return errors.New("rpc client: call failed: " + ctx.Err().Error())
+	case call := <-call.Done:
+		return call.Error
+	}
 }
 
 func (c *Client) RegisterCall(call *Call) (uint64, error) {
@@ -161,6 +213,7 @@ func (c *Client) RegisterCall(call *Call) (uint64, error) {
 		return 0, ErrShutdown
 	}
 	seq := c.seq
+	call.seq = seq
 	c.seq++
 	c.pendings[seq] = call
 	c.mux.Unlock()
