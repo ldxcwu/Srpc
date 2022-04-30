@@ -4,3 +4,4 @@ A Simple rpc implemented by golang.
 2. [客户端封装](doc/client.md)
 3. [服务注册](doc/serviceRegister.md)
 4. [超时处理](doc/timeout.md)
+5. [支持HTTP](doc/http.md)

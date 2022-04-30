@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"srpc/codec"
 	"strings"
@@ -25,7 +27,7 @@ type Option struct {
 var DefaultOption = &Option{
 	MagicNumber:    MagicNumber,
 	CodecType:      codec.GobType,
-	ConnectTimeout: time.Second * 5,
+	ConnectTimeout: time.Second * 10,
 }
 
 type Server struct {
@@ -200,4 +202,36 @@ func (server *Server) findService(serviceMethod string) (svc *service, mtype *me
 		err = errors.New("rpc server: can't find method " + methodName)
 	}
 	return
+}
+
+const (
+	connected        = "200 Connected to Srpc"
+	defaultRpcPath   = "/srpc"
+	defaultDebugPath = "/debug/srpc"
+)
+
+func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if req.Method != "CONNECT" {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		io.WriteString(w, "405 must CONNECT")
+		return
+	}
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		log.Print("rpc hijacking ", req.RemoteAddr, ": ", err.Error())
+		return
+	}
+	io.WriteString(conn, "HTTP/1.0 "+connected+"\n\n")
+	s.ServeConn(conn)
+}
+
+func (s *Server) HandleHTTP() {
+	http.Handle(defaultRpcPath, s)
+	http.Handle(defaultDebugPath, debugHTTP{s})
+	log.Println("rpc server debug path: ", defaultDebugPath)
+}
+
+func HandleHTTP() {
+	DefaultServer.HandleHTTP()
 }

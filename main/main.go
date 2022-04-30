@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net"
+	"net/http"
 	"srpc"
 	"sync"
 )
@@ -26,17 +27,17 @@ func startServer(addr chan string) {
 	if err != nil {
 		log.Fatal("Listen err: ", err)
 	}
+	srpc.HandleHTTP()
 	log.Println("listening on ", lis.Addr())
 	addr <- lis.Addr().String()
-	srpc.Accept(lis)
+	// srpc.Accept(lis)
+	http.Serve(lis, nil)
 }
 
-func main() {
+func call(addr chan string) {
 
-	addr := make(chan string)
-	go startServer(addr)
-
-	client, err := srpc.DialTimeout("tcp", <-addr, nil, nil)
+	// client, err := srpc.DialTimeout("tcp", <-addr, nil, nil)
+	client, err := srpc.DialHTTP("tcp", <-addr, nil)
 	if err != nil {
 		log.Fatal("something went wrong when dialing: ", err)
 	}
@@ -56,4 +57,10 @@ func main() {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func main() {
+	addr := make(chan string)
+	go call(addr)
+	startServer(addr)
 }

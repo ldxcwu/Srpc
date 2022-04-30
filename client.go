@@ -1,13 +1,17 @@
 package srpc
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"srpc/codec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -226,4 +230,40 @@ func (c *Client) RemoveCall(seq uint64) *Call {
 	call := c.pendings[seq]
 	delete(c.pendings, seq)
 	return call
+}
+
+func NewHTTPClient(conn net.Conn, opt *Option) (*Client, error) {
+	_, _ = io.WriteString(conn, fmt.Sprintf("CONNECT %s HTTP/1.0\n\n", defaultRpcPath))
+
+	resp, err := http.ReadResponse(bufio.NewReader(conn), &http.Request{Method: "CONNECT"})
+	if err == nil && resp.Status == connected {
+		return newClient(conn, opt)
+	}
+	if err == nil {
+		err = errors.New("unexpected HTTP response: " + resp.Status)
+	}
+	return nil, err
+}
+
+func DialHTTP(network, addr string, opt *Option) (*Client, error) {
+	return DialTimeout(network, addr, nil, NewHTTPClient)
+}
+
+// XDial calls different functions to connect to a RPC server
+// according the first parameter rpcAddr.
+// rpcAddr is a general format (protocol@addr) to represent a rpc server
+// eg, http@10.0.0.1:7001, tcp@10.0.0.1:9999, unix@/tmp/geerpc.sock
+func XDial(rpcAddr string, opt *Option) (*Client, error) {
+	parts := strings.Split(rpcAddr, "@")
+	if len(parts) == 2 {
+		return nil, fmt.Errorf("rpc client err: wrong format '%s'", rpcAddr)
+	}
+
+	protocol, addr := parts[0], parts[1]
+	switch protocol {
+	case "http":
+		return DialHTTP("tcp", addr, opt)
+	default:
+		return DialTimeout(protocol, addr, opt, nil)
+	}
 }
