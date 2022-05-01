@@ -102,6 +102,12 @@ func newClient(conn net.Conn, opt *Option) (*Client, error) {
 	return client, nil
 }
 
+func (client *Client) IsAvailable() bool {
+	client.mux.Lock()
+	defer client.mux.Unlock()
+	return !client.shutdown && !client.closing
+}
+
 func (c *Client) Close() error {
 	c.mux.Lock()
 	if c.closing {
@@ -255,7 +261,7 @@ func DialHTTP(network, addr string, opt *Option) (*Client, error) {
 // eg, http@10.0.0.1:7001, tcp@10.0.0.1:9999, unix@/tmp/geerpc.sock
 func XDial(rpcAddr string, opt *Option) (*Client, error) {
 	parts := strings.Split(rpcAddr, "@")
-	if len(parts) == 2 {
+	if len(parts) != 2 {
 		return nil, fmt.Errorf("rpc client err: wrong format '%s'", rpcAddr)
 	}
 
