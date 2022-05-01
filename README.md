@@ -5,3 +5,4 @@ A Simple rpc implemented by golang.
 3. [服务注册](doc/serviceRegister.md)
 4. [超时处理](doc/timeout.md)
 5. [支持HTTP](doc/http.md)
+6. [负载均衡](doc/loadbalance.md)
